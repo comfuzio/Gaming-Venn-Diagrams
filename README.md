@@ -3,6 +3,8 @@
 Tired of “friends” nagging you to play games you absolutely hate? This tiny PHP app lets you publish three simple text lists: games you like, games you dislike (hard block list) and games others like. Host it on your own server and just send them the link.
 
 ## Features
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/c4d096dc-8542-4540-9f78-b3297eb0c05f" />
+
 
 - Three clear categories: Like, Dislike (block list), Others like
 - Simple text files, one game per line, no database
