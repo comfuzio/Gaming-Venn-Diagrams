@@ -1,246 +1,291 @@
 <?php
-// Game Preference Venn Viewer
-// Reads three TXT files, enforces Like vs Dislike consistency,
-// and visualizes them in a Venn-style layout.
+// 1. SETUP & DATA LOADING
+// ---------------------------------------------------------
+$files = [
+    'me'      => 'games_i_like.txt',
+    'friends' => 'games_friends_like.txt',
+    'hate'    => 'games_i_dislike.txt'
+];
 
-// Load lists from text files (one title per line)
-$games_i_like = file_exists('games_i_like.txt') ? file('games_i_like.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
-$games_i_dislike = file_exists('games_i_dislike.txt') ? file('games_i_dislike.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
-$games_others_like = file_exists('games_others_like.txt') ? file('games_others_like.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
-
-// Normalize: trim, remove empties
-$games_i_like      = array_filter(array_map('trim', $games_i_like));
-$games_i_dislike   = array_filter(array_map('trim', $games_i_dislike));
-$games_others_like = array_filter(array_map('trim', $games_others_like));
-
-// Remove exact duplicates inside each list
-$games_i_like      = array_values(array_unique($games_i_like));
-$games_i_dislike   = array_values(array_unique($games_i_dislike));
-$games_others_like = array_values(array_unique($games_others_like));
-
-// Detect conflicts: same title in Like & Dislike (case-insensitive)
-$dislike_map = [];
-foreach ($games_i_dislike as $title) {
-    // keep original casing as value
-    $dislike_map[mb_strtolower($title)] = $title;
+function get_clean_list($path) {
+    if (!file_exists($path)) return [];
+    $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    return array_values(array_unique(array_map('trim', $lines)));
 }
 
-$conflicts = [];
-foreach ($games_i_like as $title) {
-    $key = mb_strtolower($title);
-    if (isset($dislike_map[$key])) {
-        $conflicts[] = $title;
+$raw_me = get_clean_list($files['me']);
+$raw_friends = get_clean_list($files['friends']);
+$raw_hate = get_clean_list($files['hate']);
+
+// Map for case-insensitive comparison
+function map_list($arr) {
+    $map = [];
+    foreach ($arr as $item) $map[mb_strtolower($item)] = $item;
+    return $map;
+}
+
+$map_me = map_list($raw_me);
+$map_friends = map_list($raw_friends);
+$map_hate = map_list($raw_hate);
+
+// 2. LOGIC PROCESSING
+// ---------------------------------------------------------
+
+// A. Clean "Me" list (Remove anything I hate from my own list, just in case)
+foreach ($map_hate as $k => $v) {
+    if (isset($map_me[$k])) unset($map_me[$k]);
+}
+
+// B. Calculate "Mutual" (Me + Friends)
+$mutual = [];
+foreach ($map_me as $k => $v) {
+    if (isset($map_friends[$k])) {
+        $mutual[] = $v;
+        unset($map_me[$k]);
+        unset($map_friends[$k]);
     }
 }
 
-// Apply rule: if a title exists in both Like and Dislike,
-// keep it only in Dislike, remove from Like, but show warning.
-if (!empty($conflicts)) {
-    $conflict_lookup = [];
-    foreach ($conflicts as $c) {
-        $conflict_lookup[mb_strtolower($c)] = true;
+// C. Calculate "Conflict" (Friends + Hate)
+// "Games you like but I dislike"
+$conflict = [];
+foreach ($map_hate as $k => $v) {
+    if (isset($map_friends[$k])) {
+        $conflict[] = $v;
+        unset($map_hate[$k]); // Remove from pure hate
+        unset($map_friends[$k]); // Remove from pure friends (if not already gone)
     }
-
-    $games_i_like = array_values(array_filter($games_i_like, function ($title) use ($conflict_lookup) {
-        return !isset($conflict_lookup[mb_strtolower($title)]);
-    }));
 }
 
-// Sort lists alphabetically in human-friendly, case-insensitive way
-sort($games_i_like, SORT_NATURAL | SORT_FLAG_CASE);
-sort($games_i_dislike, SORT_NATURAL | SORT_FLAG_CASE);
-sort($games_others_like, SORT_NATURAL | SORT_FLAG_CASE);
+// 3. FINALIZE ARRAYS
+$list_me = array_values($map_me);         // "Games I enjoy..."
+$list_mutual = array_values($mutual);     // "Games we can all play..."
+$list_friends = array_values($map_friends);// "Games you like but I haven't checked..."
+$list_conflict = array_values($conflict); // "Games you like but I dislike"
+$list_hate = array_values($map_hate);     // "Games I absolutely dislike..."
+
+// Sort
+sort($list_me, SORT_NATURAL | SORT_FLAG_CASE);
+sort($list_mutual, SORT_NATURAL | SORT_FLAG_CASE);
+sort($list_friends, SORT_NATURAL | SORT_FLAG_CASE);
+sort($list_conflict, SORT_NATURAL | SORT_FLAG_CASE);
+sort($list_hate, SORT_NATURAL | SORT_FLAG_CASE);
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Game Preference Venn</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game Compatibility Venn</title>
     <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
+        :root {
+            --bg-color: #0d1117;
+            --text-main: #e6edf3;
+            --text-sub: #8b949e;
+            
+            /* Venn Colors */
+            --c-me: rgba(46, 160, 67, 0.6);      /* Green with opacity */
+            --c-friends: rgba(56, 139, 253, 0.6); /* Blue with opacity */
+            --c-overlap: rgba(46, 160, 67, 0.2);  /* Fallback color */
+            
+            /* Warning Colors */
+            --c-conflict: rgba(210, 153, 34, 0.15);
+            --b-conflict: #d29922;
+            
+            --c-hate: rgba(248, 81, 73, 0.15);
+            --b-hate: #f85149;
+        }
 
         body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: #0f172a;
-            color: #e5e7eb;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
             min-height: 100vh;
-            display:flex;
-            flex-direction:column;
-            align-items:center;
-            padding:20px;
         }
 
-        h1 {
-            margin-bottom: 10px;
-            text-align:center;
-        }
+        h1 { margin-bottom: 50px; text-transform: uppercase; letter-spacing: 2px; font-weight: 300; }
+        h2 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 15px; color: var(--text-sub); min-height: 35px; display:flex; align-items:center; justify-content:center;}
+        
+        ul { list-style: none; padding: 0; margin: 0; width: 100%; }
+        li { padding: 6px 12px; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.95rem; text-align: center; }
+        li:last-child { border-bottom: none; }
+        li.empty { font-style: italic; opacity: 0.5; font-size: 0.85rem; }
 
-        .subtitle {
-            margin-bottom: 30px;
-            text-align:center;
-            font-size:0.9rem;
-            color:#9ca3af;
-        }
-
+        /* --- THE VENN SECTION --- */
         .venn-wrapper {
+            display: flex;
+            justify-content: center;
+            align-items: stretch; /* Stretch to same height */
+            width: 100%;
+            max-width: 1200px;
+            margin-bottom: 80px;
             position: relative;
-            width: 600px;
-            max-width: 100%;
-            aspect-ratio: 1 / 1;
         }
 
-        .circle {
-            position: absolute;
-            width: 60%;
-            height: 60%;
-            border-radius: 50%;
-            padding: 20px;
-            overflow: auto;
-            backdrop-filter: blur(4px);
-            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+        .venn-circle {
+            flex: 1;
+            min-width: 300px;
+            border-radius: 50%; /* Make them circles visually */
+            padding: 60px 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            /* This blend mode creates the real color mixing effect */
+            background-blend-mode: screen; 
+            transition: transform 0.3s ease;
         }
 
-        .circle h2 {
-            font-size: 1rem;
-            margin-bottom: 8px;
+        /* 1. LEFT: ME */
+        .circle-me {
+            background-color: var(--c-me);
+            box-shadow: 0 0 50px var(--c-me);
+            margin-right: -60px; /* Force overlap */
+            z-index: 1;
+            border: 2px solid rgba(255,255,255,0.1);
         }
 
-        .circle ul {
-            list-style: none;
-            font-size: 0.8rem;
-        }
-
-        .circle ul li {
-            margin-bottom: 4px;
-        }
-
-        /* Left circle – I Like */
-        .circle-like {
-            top: 20%;
-            left: 5%;
-            background: rgba(16, 185, 129, 0.35); /* green */
-            border: 2px solid rgba(16,185,129,0.8);
-        }
-
-        /* Right circle – Others Like */
-        .circle-others {
-            top: 20%;
-            right: 5%;
-            background: rgba(59, 130, 246, 0.35); /* blue */
-            border: 2px solid rgba(59,130,246,0.8);
-        }
-
-        /* Bottom circle – Dislike */
-        .circle-dislike {
-            bottom: 5%;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(239, 68, 68, 0.35); /* red */
-            border: 2px solid rgba(239,68,68,0.8);
-        }
-
-        .footer {
+        /* 2. MIDDLE: MUTUAL */
+        /* We fake the lens shape by using a rectangle that sits on top */
+        .circle-mutual {
+            flex: 0.8; /* Slightly narrower */
+            z-index: 10; /* On top */
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px); /* Blurs the layers behind it */
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.2);
             margin-top: 20px;
-            font-size: 0.8rem;
-            color:#9ca3af;
-            text-align:center;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        
+        /* 3. RIGHT: FRIENDS */
+        .circle-friends {
+            background-color: var(--c-friends);
+            box-shadow: 0 0 50px var(--c-friends);
+            margin-left: -60px; /* Force overlap */
+            z-index: 1;
+            border: 2px solid rgba(255,255,255,0.1);
+        }
+        
+        /* Titles specific colors */
+        .circle-me h2 { color: #7ee787; }
+        .circle-mutual h2 { color: #fff; text-shadow: 0 0 10px rgba(255,255,255,0.5); }
+        .circle-friends h2 { color: #79c0ff; }
+
+
+        /* --- THE WARNING SECTION --- */
+        .warning-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            width: 100%;
+            max-width: 1000px;
+            margin-top: 20px;
         }
 
-        .conflict-alert {
-            margin-top: 24px;
-            max-width: 700px;
-            padding: 16px 20px;
-            border-radius: 10px;
-            background: rgba(248, 113, 113, 0.15);
-            border: 1px solid rgba(248, 113, 113, 0.6);
-            color: #fecaca;
-            font-size: 0.9rem;
+        .warn-box {
+            background: #161b22;
+            border-radius: 12px;
+            padding: 25px;
+            border: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
-        .conflict-alert ul {
-            margin-top: 8px;
-            margin-left: 18px;
-        }
+        .box-conflict { border-top: 4px solid var(--b-conflict); background: linear-gradient(180deg, var(--c-conflict) 0%, transparent 100%); }
+        .box-conflict h2 { color: var(--b-conflict); }
 
-        .conflict-alert li {
-            margin-bottom: 3px;
-        }
+        .box-hate { border-top: 4px solid var(--b-hate); background: linear-gradient(180deg, var(--c-hate) 0%, transparent 100%); }
+        .box-hate h2 { color: var(--b-hate); }
 
-        @media (max-width: 640px) {
-            .circle { padding: 12px; }
-            .circle h2 { font-size: 0.9rem; }
-            .circle ul { font-size: 0.75rem; }
+        /* SCROLLBARS FOR LISTS */
+        .list-container {
+            width: 100%;
+            max-height: 300px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+        .list-container::-webkit-scrollbar { width: 6px; }
+        .list-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+
+        /* RESPONSIVE */
+        @media (max-width: 900px) {
+            .venn-wrapper { flex-direction: column; align-items: center; margin-bottom: 40px; }
+            .venn-circle { width: 100%; margin: 0; border-radius: 20px; margin-bottom: 20px; }
+            .circle-mutual { margin: 0 0 20px 0; z-index: 1; }
+            .warning-section { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
-    <h1>🎮 Game Preference Venn</h1>
-    <p class="subtitle">
-        Green: games you like – Blue: games others like – Red: games you dislike
-    </p>
+
+    <h1>Gaming Compatibility Engine</h1>
 
     <div class="venn-wrapper">
-        <!-- Games I Like -->
-        <div class="circle circle-like">
-            <h2>✅ I Like (<?= count($games_i_like) ?>)</h2>
-            <?php if (empty($games_i_like)): ?>
-                <ul><li><em>No games added</em></li></ul>
-            <?php else: ?>
+        
+        <div class="venn-circle circle-me">
+            <h2>Games I enjoy and can play</h2>
+            <div class="list-container">
                 <ul>
-                    <?php foreach ($games_i_like as $game): ?>
-                        <li><?= htmlspecialchars($game) ?></li>
-                    <?php endforeach; ?>
+                    <?php if(empty($list_me)) echo "<li class='empty'>No unique games</li>"; ?>
+                    <?php foreach($list_me as $g) echo "<li>$g</li>"; ?>
                 </ul>
-            <?php endif; ?>
+            </div>
         </div>
 
-        <!-- Games Others Like -->
-        <div class="circle circle-others">
-            <h2>👥 Others Like (<?= count($games_others_like) ?>)</h2>
-            <?php if (empty($games_others_like)): ?>
-                <ul><li><em>No games added</em></li></ul>
-            <?php else: ?>
+        <div class="venn-circle circle-mutual">
+            <h2>Games we can all play and enjoy together</h2>
+            <div class="list-container">
                 <ul>
-                    <?php foreach ($games_others_like as $game): ?>
-                        <li><?= htmlspecialchars($game) ?></li>
-                    <?php endforeach; ?>
+                    <?php if(empty($list_mutual)) echo "<li class='empty'>No matches found</li>"; ?>
+                    <?php foreach($list_mutual as $g) echo "<li><strong>$g</strong></li>"; ?>
                 </ul>
-            <?php endif; ?>
+            </div>
         </div>
 
-        <!-- Games I Dislike -->
-        <div class="circle circle-dislike">
-            <h2>❌ I Dislike (<?= count($games_i_dislike) ?>)</h2>
-            <?php if (empty($games_i_dislike)): ?>
-                <ul><li><em>No games added</em></li></ul>
-            <?php else: ?>
+        <div class="venn-circle circle-friends">
+            <h2>Games you like but I haven't checked yet</h2>
+            <div class="list-container">
                 <ul>
-                    <?php foreach ($games_i_dislike as $game): ?>
-                        <li><?= htmlspecialchars($game) ?></li>
-                    <?php endforeach; ?>
+                    <?php if(empty($list_friends)) echo "<li class='empty'>No unique games</li>"; ?>
+                    <?php foreach($list_friends as $g) echo "<li>$g</li>"; ?>
                 </ul>
-            <?php endif; ?>
+            </div>
         </div>
+
     </div>
 
-    <div class="footer">
-        Edit: games_i_like.txt · games_i_dislike.txt · games_others_like.txt
+    <div class="warning-section">
+        
+        <div class="warn-box box-conflict">
+            <h2>Games you like but I dislike</h2>
+            <div class="list-container">
+                <ul>
+                    <?php if(empty($list_conflict)) echo "<li class='empty'>Peaceful gaming...</li>"; ?>
+                    <?php foreach($list_conflict as $g) echo "<li>$g</li>"; ?>
+                </ul>
+            </div>
+        </div>
+
+        <div class="warn-box box-hate">
+            <h2>Games I absolutely dislike and don't want to play</h2>
+            <div class="list-container">
+                <ul>
+                    <?php if(empty($list_hate)) echo "<li class='empty'>No hated games</li>"; ?>
+                    <?php foreach($list_hate as $g) echo "<li>$g</li>"; ?>
+                </ul>
+            </div>
+        </div>
+
     </div>
 
-    <?php if (!empty($conflicts)): ?>
-        <div class="conflict-alert">
-            <strong>⚠ Inconsistent entries detected</strong>
-            <p>
-                The following titles exist in both <em>Like</em> and <em>Dislike</em> lists.
-                They were kept only in <em>Dislike</em>. Please fix your .txt files:
-            </p>
-            <ul>
-                <?php foreach ($conflicts as $c): ?>
-                    <li><?= htmlspecialchars($c) ?></li>
-                <?php endforeach; ?>
-            </ul>
-        </div>
-    <?php endif; ?>
 </body>
 </html>
